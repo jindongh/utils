@@ -1,0 +1,369 @@
+#!/bin/bash
+###########
+#Usage: 
+# 1. create story
+# 2. bu cv <storyid> <msg>
+# 3. bu ci <storyid>
+#*4. bu list
+##########
+HOME=/home/hankjin
+PROGNAME=$0
+CARD=""
+CVID=""
+CVER=""
+MSG=""
+#prepare dbdir
+SVN=/usr/local/bin/svn
+DBDIR=${HOME}/bin/.bu/db
+DBBAK=${HOME}/bin/.bu/bak
+DBSVN=${HOME}/bin/.bu/svn
+DBTMP=${HOME}/bin/.bu/tmp
+if [ ! -d ${DBDIR} ];then
+    rm -fr ${DBDIR};
+    mkdir -p ${DBDIR}
+    if [ -d ${HOME}/bin/.bu ]; then
+        cp ${HOME}/bin/.bu/* ${DBDIR}
+    fi
+fi
+if [ ! -d ${DBBAK} ]; then
+    rm -fr ${DBBAK}
+    mkdir -p ${DBBAK}
+    if [ -d ${HOME}/bin/.bubak ]; then
+        cp ${HOME}/bin/.bubak/* ${DBBAK}
+    fi
+fi
+if [ ! -d ${DBSVN} ]; then
+    rm -fr ${DBSVN}
+    mkdir -p ${DBSVN}
+    if [ -d ${HOME}/bin/.budiff ]; then
+        cp ${HOME}/bin/.budiff/* ${DBSVN}
+    fi
+fi
+if [ ! -d ${DBTMP} ]; then
+    rm -fr ${DBTMP}
+    mkdir -p ${DBTMP}
+fi
+#############################################Story DB##########################
+function setStory()
+{
+    echo ${CVID} > ${DBDIR}/${CARD}
+    echo ${CVER} >> ${DBDIR}/${CARD}
+    echo $(pwd) >> ${DBDIR}/${CARD}
+    echo ${MSG} >> ${DBDIR}/${CARD}
+}
+function getStory()
+{
+    CARDFILE=$1/${CARD}
+    if [ ! -f ${CARDFILE} ]; then
+        return 1
+    fi
+    CVID=$(head -n 1 ${CARDFILE})
+    CVER=$(head -n 2 ${CARDFILE}|tail -n 1)
+    CVDIR=$(head -n 3 ${CARDFILE}|tail -n 1)
+    LEN=$(cat ${CARDFILE}|wc -l)
+    MSG=$(tail -n $((LEN-3)) ${CARDFILE})
+    return 0
+}
+function rmStory()
+{
+    CARD=$1
+    if [ ! -f ${DBDIR}/${CARD} ]; then
+        return 1
+    fi
+    mv ${DBDIR}/${CARD} ${DBBAK}/${CARD}
+}
+function getSVNUser()
+{
+    CONT=$(cat ${HOME}/.subversion/auth/svn.*/*)
+    [ $? -ne 0 ] && echo "$USER@$HOSTNAME" && return
+    POS=0
+    for line in ${CONT[@]}
+    do
+        POS=$((POS+1))
+        if [ "x$line" == "xusername" ]; then
+            POS=1000
+        fi
+        if [ $POS -eq 1003 ]; then
+            echo $line
+            return
+        fi
+    done
+}
+############################## beehive robots #################################
+function hi()
+{
+    ACTION=$1
+    HEAD="send_grp_msg 1419573"
+    ADDR='("172.21.58.156", 14440)'
+    SVNPATH=$(${SVN} info|grep '^URL'|awk -F/ '{print $NF}')
+    HIMSG="${HEAD} $ACTION: ${SVNPATH} ${MSG}"
+    python -c "from socket import *; s=socket(AF_INET,SOCK_DGRAM);s.sendto('${HIMSG}',$ADDR);"
+    HIMSG="${HEAD} CARD: ${CARD}"
+    python -c "from socket import *; s=socket(AF_INET,SOCK_DGRAM);s.sendto('${HIMSG}',$ADDR);"
+    HIMSG="${HEAD} From: $(getSVNUser)"
+    python -c "from socket import *; s=socket(AF_INET,SOCK_DGRAM);s.sendto('${HIMSG}',$ADDR);"
+    HIMSG="${HEAD} CV: <a href=http://cooder.xxx.com/${CVID}/>"
+    python -c "from socket import *; s=socket(AF_INET,SOCK_DGRAM);s.sendto('${HIMSG}',$ADDR);"
+}
+function cvHI()
+{
+    hi CodeReview
+}
+function ciHi()
+{
+    hi CICode
+}
+##############################################PRE-SUBMIT#######################
+function pre_submit()
+{
+    SVNPATH=$(${SVN} info|grep '^URL'|awk -F/ '{print $NF}')
+    if [ ${SVNPATH} == "agent" ] || [ ${SVNPATH} == "stat" ] || [ ${SVNPATH} == "pd" ] || [ ${SVNPATH} == "rm" ] || [ ${SVNPATH} == "ns" ] || [ ${SVNPATH} == "shell" ];then
+        echo "Now, pre-submit ..., please wait, you can check via pre_submit.log"
+        UPLOAD_TOOL_PATH=$(which upload.py 2> /dev/null)
+        my_wrap pre-submit --more-build-params "${SVNPATH}" -u ${UPLOAD_TOOL_PATH} | tee pre_submit.log
+        if [ $? -ne 0 ];then
+            echo "pre-submit fail, please check pre_submit.log"
+            exit 255
+        fi
+        PRE_SUBMIT_ID=`cat pre_submit.log |grep "PRE_SUBMIT_ID " | awk -F: '{print $NF}'`
+        if [ "${PRE_SUBMIT_ID}" == "" ];then
+            echo "pre-submit fail, please check pre_submit.log"
+            exit 255
+        fi
+        i=60
+        while (($i>1)) 
+        do
+            PRE_SUBMIT_STATUS=`pre-submit -s ${PRE_SUBMIT_ID} | grep "TOTAL"|awk '{print $NF}'`
+            if [ ${PRE_SUBMIT_STATUS} == "FAILURE" ];then
+                echo "pre-submit fail, please check pre_submit.log"
+                echo "please check: http://classified.jenkins.xxx.com/view/myproj/job/lb-myproj_trunk/"
+                exit 255
+            elif [ ${PRE_SUBMIT_STATUS} == "SUCCESS" ];then
+                echo "pre-submit success"
+                i=0
+            elif [ ${PRE_SUBMIT_STATUS} == "WAITING" ];then
+                sleep 60
+                let i--
+            fi
+        done
+        if [ $i -eq 1 ];then
+            echo "pre-submit fail, status is WAITING"
+            exit 255
+        fi
+    fi
+}
+function my_wrap
+{
+    BIN_NAME=$1
+    BIN_PATH=$(which ${BIN_NAME} 2> /dev/null)
+    if [ $? -ne 0 ]; then
+        echo "${BIN_NAME} not exists" && exit 1
+    fi
+    WRAP_PATH=$(dirname $BIN_PATH)/wrap.py
+    if [ ! -f "${WRAP_PATH}"  -o 1 ];then
+        cat > ${WRAP_PATH} <<EOF
+#!/bin/env python
+import sys
+import getpass
+
+old_raw_input=raw_input
+def my_raw_input(tip):
+    sys.stdout.write(tip)
+    sys.stdout.flush()
+    return old_raw_input()
+old_getpass=getpass.getpass
+def my_getpass(tip):
+    sys.stdout.write(tip)
+    sys.stdout.flush()
+    return old_getpass()
+
+def main():
+    if len(sys.argv) < 1:
+        sys.stderr.write('Usage %s <bin> [<args>]' % sys.argv[0])
+    raw_input=my_raw_input
+    getpass.getpass=my_getpass
+    l={'__file__':'${BIN_PATH}', '__name__':'__main__'}
+    sys.argv=sys.argv[1:]
+    print sys.argv
+    execfile('${BIN_PATH}', l, l)
+
+if __name__=='__main__':
+    main()
+EOF
+        chmod +x ${WRAP_PATH}
+    fi
+    echo ${WRAP_PATH} "$@"
+    ${WRAP_PATH} "$@"
+    return $?
+}
+##############################################CV & CI###########################
+function cv()
+{
+    CARD=myproj-ci-$1
+    shift 1
+    MSG=$*
+    if [ "x$CARD" == "x" -o "x$MSG" == "x" ]; then
+        echo "Usage $PROGNAME cv CARD MSG" && exit 1
+    fi
+    if [ -f owner.txt ]; then
+        CVER=$(cat owner.txt)
+    else
+        CVER="hankjin"
+    fi
+
+    #pre_submit
+
+    echo "Now, upload.py ..., please wait"
+    TMP_FILE=$(mktemp)
+    my_wrap upload.py -y --encoding=gbk --card=${CARD} --reviewers=${CVER} --message="$*" | tee ${TMP_FILE}
+    if [ $? -ne 0 ]; then
+        rm ${TMP_FILE}
+        echo "CV failed" && exit 1
+    fi
+    CVID=$(cat ${TMP_FILE}|grep cooder.xxx.com|awk -Fcooder.xxx.com/ '{print $2}'|awk '{print $1}')
+
+    ${SVN} diff > ${DBSVN}/${CVID}
+    setStory
+    cvHI
+}
+function ci()
+{
+    CVID=$1
+    shift 1
+    MSG=$@
+    CARD=myproj-ci-$CVID
+    if [ "x$CARD" == "x" ]; then
+        echo "Usage $PROGNAME ci [CARD][CVID MSG]" && exit 1
+    fi
+    if [ "x$MSG" == "x" ]; then
+        getStory ${DBDIR}
+        if [ $? -ne 0 ]; then
+            echo "Story ${CARD} not exist" > /dev/stderr
+            echo "use ${ROGNAME} ci <CVID> <MSG> to ci" > /dev/stderr
+            getStory ${DBBAK}
+            if [ $? -eq 0 ]; then
+                echo "bu ci ${CVID} ${MSG}"
+            fi
+            exit 1
+        fi
+    fi
+    local LOGFILE=${DBTMP}/bulog
+    echo ${MSG} > ${LOGFILE}
+    echo "ISSUE=${CVID}" >> ${LOGFILE}
+    echo "FEA=0" >> ${LOGFILE}
+    echo "TESTED=MANUAL" >> ${LOGFILE}
+    ${SVN} diff > ${DBTMP}/budiff
+    DIFFLN=$(diff ${DBTMP}/budiff ${DBSVN}/${CVID} |
+        grep -v '(revision' |
+        grep -v '^---$' |
+        grep -v '^> @@' |
+        grep -v '^< @@' |
+        grep -v '^[0-9]\+c[0-9]\+$' | wc -l)
+    if [ $DIFFLN -ne 0 ]; then
+        echo "=============================================="
+        echo "!!!!!!!!!!!!CV and CI is not the same!!!!!!!!!"
+        echo "=============================================="
+        echo "vimdiff ${DBTMP}/budiff ${DBSVN}/${CVID}"
+        #exit 1
+    fi
+    ${SVN} ci -F ${LOGFILE}
+    if [ $? -eq 0 ];then
+        rmStory ${CARD}
+    else
+        exit 1
+    fi
+    ciHi
+}
+function showCards()
+{
+    if [ "x$1" == "x" ]; then
+        echo "showCards has no dir" && exit 1
+    fi
+    for file in `ls -t $1`
+    do
+        CARD=$file
+        getStory $1
+        echo ">>>>card:${CARD}"
+        echo "    cvid:${CVID}"
+        echo "    cver:${CVER}"
+        echo "    msg:${MSG}"
+    done
+}
+function notify()
+{
+    if [ "x$1" == "x" ]; then
+        TMO=$((3600*12))
+    else
+        TMO=$1
+    fi
+    NOW=$(date +%s)
+    for file in `ls ${DBDIR}`
+    do
+        LAST=$(stat -c %Y ${DBDIR}/${file})
+        if [ $((NOW-LAST)) -gt ${TMO} ]; then
+            CARD=$file
+            getStory ${DBDIR}
+            cd ${CVDIR}
+            $(dirname $0)/bu ci ${CARD#myproj-ci-}
+            if [ $? -ne 0 ];then
+                hi LongTimeNoCV
+            fi
+            cd - >/dev/null
+        fi
+    done
+}
+function showList()
+{
+    if [ "x$1" == "xall" -o  "x$1" == "xdoing" -o "x$1" == "x" ]; then
+        echo '=========Doing Card============='
+        showCards ${DBDIR}
+    fi
+    if [ "x$1" == "xall" -o "x$1" == "xdone" ]; then
+        echo '=========Done Cards============='
+        showCards ${DBBAK}
+    fi
+}
+function update()
+{
+    BIN_PATH="$(cd $(dirname "$0"); pwd)/$(basename "$0")"
+    mv ${BIN_PATH} ${BIN_PATH}.bak
+    wget --quiet ftp://hankjin.vicp.net/home/hankjin/bh/util/bin/bu -O ${BIN_PATH}
+    if [ $? -eq 0 ];then
+        chmod +x ${BIN_PATH}
+        echo "Upgrade succeed"
+    else
+        mv ${BIN_PATH}.bak ${BIN_PATH}
+        echo "Upgrade failed"
+    fi
+}
+
+############################## Main ###########################################
+function usage()
+{
+    echo "Usage: $0 list [doing|done|all]"
+    echo "Usage: $0 notify [tmo(seconds)]"
+    echo "Usage: $0 cv <card> <msg>"
+    echo "Usage: $0 ci <card>"
+    echo "Usage: $0 update"
+}
+
+if [ "x$1" == "x" -o "x$1" == "x-h" ]; then
+    usage
+elif [ "x$1" == "xci" ]; then
+    shift 1
+    ci $@
+elif [ "x$1" == "xcv" ]; then
+    shift 1
+    cv $@
+elif [ "x$1" == "xupdate" ]; then
+    update
+elif [ "x$1" == "xnotify" ]; then
+    notify $2
+elif [ "x$1" == "xlist" ]; then
+    showList $2
+elif [ "x$1" == "xtest" ]; then
+    echo $(getSVNUser)
+else
+    usage && exit 1
+fi
+
