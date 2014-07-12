@@ -40,10 +40,11 @@ class Page:
         if not 1 == len(pubDates):
             oops('%d pubDate found in url %s' % (len(pubDates), url))
         self.blog.pubDate=pubDates[0]
-        contents=re.findall('<div class="bct fc05 fc11 nbw-blog ztag">(.*)', raw)
+        pat=re.compile('<div class="bct fc05 fc11 nbw-blog ztag">(.*)<div class="nbw-blog-end">', re.DOTALL)
+        contents=pat.findall(raw)
         if not 1 == len(contents):
             oops('%d content found in url %s' % (len(contents), url))
-        self.blog.content=contents[0]
+        self.blog.content=contents[0].strip()[:-6]
         categorys=re.findall('<a class="fc03 m2a" href=.*>(.*)</a>', raw)
         if not 1 == len(categorys):
             oops('%d category found in url %s' % (len(categorys), url))
