@@ -57,8 +57,8 @@ def generateRSS(blogs):
         author.appendChild(value)
 
         #pubdate
-        pubdate=dom.createElement('pubdate')
-        item.appendChild(category)
+        pubdate=dom.createElement('pubDate')
+        item.appendChild(pubdate)
         value=dom.createTextNode(blog['pubDate'].encode('utf-8'))
         pubdate.appendChild(value)
 
@@ -68,7 +68,7 @@ def generateRSS(blogs):
         item.appendChild(guid)
         value=dom.createTextNode(blog['url'])
         guid.appendChild(value)
-    dom.writexml(sys.stdout, addindent='  ', newl='\n',encoding='utf-8')
+    dom.writexml(open('163.xml','w'), addindent='  ', newl='\n',encoding='utf-8')
 
 def main():
     blogs = getBlogs()

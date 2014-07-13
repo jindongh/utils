@@ -56,7 +56,7 @@ class Page:
             if not os.path.isdir('data'):
                 return False
         else:
-            os.path.mkdir('data')
+            os.mkdir('data')
         fp = open('data/%s' % blog.id, 'w')
         fp.write(blog.to_json())
         return True
